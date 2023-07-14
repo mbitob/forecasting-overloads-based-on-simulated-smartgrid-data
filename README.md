@@ -1,7 +1,7 @@
 # forecasting-overloads-based-on-simulated-smartgrid-data
 
 
-We provide the dataset, traning and validation setup.
+We provide the dataset, training and validation setup.
 (Install `requirements.txt` to get startet)
 
 ## Dataset 
