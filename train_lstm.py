@@ -10,7 +10,8 @@ from time import time as get_time
 from utils import train_one_epoch, evaluate, generate_sequences
 from utils import SequenceDataset, search_csv_files
 from models import simpleLSTM
-#torch.manual_seed(1)
+
+torch.manual_seed(1)
 
 def main():
     device = args.device 
