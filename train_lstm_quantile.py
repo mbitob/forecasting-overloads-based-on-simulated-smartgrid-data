@@ -8,8 +8,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from time import time as get_time
 from utils import train_one_epoch, evaluate, generate_sequences
-from utils import SequenceDataset, search_csv_files
-from models import simpleLSTM
+from utils import SequenceDataset, QuantileLossMulti, search_csv_files
+
+from models import simpleLSTM_quantiles
 
 torch.manual_seed(1)
 
@@ -25,6 +26,9 @@ def main():
     #train_val_test_split = args.train_val_test_split # Splits the data into train, valid, and test chunks
     model_save_path =  os.path.join(experiment_path, 'best_valid_model.pt')
     scaling_factors_path = os.path.join(experiment_path, 'scalings.json')
+    quantiles = [0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.98]
+    quantile_weights=[1 for i in range(len(quantiles))]
+
     os.makedirs(experiment_path, exist_ok=True)
   
     # Dataframe for storing important metrics over epochs
@@ -42,12 +46,13 @@ def main():
         n_input = 1
         
     #print(n_input)
-    model = simpleLSTM(n_input_features = n_input, n_hidden = 50, num_layers = 4, n_outputs = 1)
+    model = simpleLSTM_quantiles(n_input_features = n_input, n_hidden = 50, num_layers = 4, n_outputs = 1)
+    #model = simpleCfC(n_input_features = n_input, n_hidden = 50, num_layers = 1, n_outputs = 1)
     model.to(device)
 
     # Define Optimizer and Hyperaparameter/LR scheduler
     lr_tmp = LR # variable for logging lr
-    criterion = nn.MSELoss()
+    criterion =  QuantileLossMulti(quantiles , quantile_weights)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=0)
 
@@ -174,7 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('--lookback', type=int, default=100, help='look back of network')
     parser.add_argument('--positional_encoding', type = str, default='all', choices=['none', 'sun', 'all'], help='defines which data to use for forecasting')
     parser.add_argument('--data_path', type=str, default='./raw_data/final_splits')
-    parser.add_argument('--experiment_path', type=str, default='./saved_runs/lstm_test')
+    parser.add_argument('--experiment_path', type=str, default='./saved_runs/test_quantiles')
     args = parser.parse_args()
 
     print("device is --------------", args.device)
