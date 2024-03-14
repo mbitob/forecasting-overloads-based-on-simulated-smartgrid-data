@@ -3,12 +3,16 @@ import json
 import os
 
 
-def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScenario", time_horizon = "0101-3112"):
+def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScenario", time_horizon = "0101-3112", scale_NP_EC_based_on_LV = False):
     """
     This function prepares the training, validation and test data for the LSTM model for three different targets: LV, EC, NP.
     It reads the raw data from the BIFROST experiment, scales the data and saves it to the correct path.
     Additionally, it saves the scaling factors for each target to a json file (scaling is done with Min-Max normalization of training data).
     """
+    if scale_NP_EC_based_on_LV:
+        additional_info = "_by_LV"
+    else:
+        additional_info = ""
 
     experiment_main_path = os.path.join('./experiments/',settlement,experiment,time_horizon)
 
@@ -43,8 +47,8 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
 
     # save data for each target key
     for key in keys.keys():
+        print(key)
         
-
         # prepare pd df for each target
         year_df = pd.DataFrame(columns=[key, 'sun_altitude', 'sun_azimuth', 'irradiance_real', 'irradiance_fc'])
         
@@ -57,7 +61,6 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
         # SCALING of Irradiance Forecast
         #df_combinded['irradiance_fc']  = df_combinded['irradiance_fc'] * 1.2 #ATTENTION
 
-
         # Save first 6 months as training data
 
         train_df =  year_df['2021-01-01':'2021-07-01']
@@ -67,19 +70,36 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
         df_train_scaled = pd.DataFrame(columns = target_columns)
     
         #Min-Max normalization
-        scaling_dictionary = {}
-        for column in target_columns:
-            max_val = train_df.loc[:, column].values.max()
-            min_val = train_df.loc[:, column].values.min()
-            scaling_dictionary[column] = {'max' : max_val, 'min': min_val}
-            df_train_scaled[column] = (train_df[column].values - min_val) / (max_val - min_val)
+        if key == 'LV' and scale_NP_EC_based_on_LV:
+            # Use LV scaling dict for NP and EC
+            scaling_dictionary = {}
+            for column in target_columns:
+                max_val = train_df.loc[:, column].values.max()
+                min_val = train_df.loc[:, column].values.min()
+                scaling_dictionary[column] = {'max' : max_val, 'min': min_val}
+
+        elif not scale_NP_EC_based_on_LV:
+            scaling_dictionary = {}
+            for column in target_columns:
+                max_val = train_df.loc[:, column].values.max()
+                min_val = train_df.loc[:, column].values.min()
+                scaling_dictionary[column] = {'max' : max_val, 'min': min_val}
+
+        for i, column in enumerate(target_columns):
+            if scale_NP_EC_based_on_LV and i==0:
+                max_val = scaling_dictionary['LV']['max']
+                min_val = scaling_dictionary['LV']['min']
+            else:
+                max_val = scaling_dictionary[column]['max']
+                min_val = scaling_dictionary[column]['min']
+            df_train_scaled[column] = ((train_df[column].values - min_val) / (max_val - min_val))
         df_train_scaled.index = train_df.index
-        
+
         # save scaled training data
-        df_train_scaled.to_csv(os.path.join(lstm_path,'{}_scaled_train.csv'.format(key)))
+        df_train_scaled.to_csv(os.path.join(lstm_path,f'{key}_scaled{additional_info}_train.csv'))
 
         # Write Scaling factors:
-        scaling_factors_path = os.path.join(lstm_path, '{}_scalings.json'.format(key))
+        scaling_factors_path = os.path.join(lstm_path, f'{key}_scalings{additional_info}.json')
         with open(scaling_factors_path, 'w') as file:
             json.dump(scaling_dictionary, file)
 
@@ -111,32 +131,40 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
             df_test_scaled = pd.DataFrame(columns = target_columns)
             df_valid_scaled = pd.DataFrame(columns = target_columns) 
 
-            for column in target_columns:
-                max_val = scaling_dictionary[column]['max']
-                min_val = scaling_dictionary[column]['min']
-                df_valid_scaled[column] = (val_df[column].values - min_val) / (max_val - min_val)
+            for i, column in enumerate(target_columns):
+                if scale_NP_EC_based_on_LV and i==0:
+                    max_val = scaling_dictionary['LV']['max']
+                    min_val = scaling_dictionary['LV']['min']
+                else:
+                    max_val = scaling_dictionary[column]['max']
+                    min_val = scaling_dictionary[column]['min']
+                df_valid_scaled[column] = ((val_df[column].values - min_val) / (max_val - min_val))
             df_valid_scaled.index = val_df.index
             
-
-            for column in target_columns:
-                max_val = scaling_dictionary[column]['max']
-                min_val = scaling_dictionary[column]['min']
-                df_test_scaled[column] = (test_df[column].values - min_val) / (max_val - min_val)
+            for i, column in enumerate(target_columns):
+                if scale_NP_EC_based_on_LV and i==0:
+                    max_val = scaling_dictionary['LV']['max']
+                    min_val = scaling_dictionary['LV']['min']
+                else:
+                    max_val = scaling_dictionary[column]['max']
+                    min_val = scaling_dictionary[column]['min']
+                df_test_scaled[column] = ((test_df[column].values - min_val) / (max_val - min_val))
             df_test_scaled.index = test_df.index
             
             # save scaled validation and test data
-            df_valid_scaled.to_csv(os.path.join(lstm_path, f'{key}_scaled_val{index}.csv'))
-            df_test_scaled.to_csv(os.path.join(lstm_path, f'{key}_scaled_test{index}.csv'))
+            df_valid_scaled.to_csv(os.path.join(lstm_path, f'{key}_scaled{additional_info}_val{index}.csv'))
+            df_test_scaled.to_csv(os.path.join(lstm_path, f'{key}_scaled{additional_info}_test{index}.csv'))
                 
             index += 1
     
 
 if __name__ == '__main__':
 
-    os.chdir(os.path.dirname(__file__))
+    #os.chdir(os.path.dirname(__file__))
 
     settlement = "Rural-LV1-101-2034"
     experiment = "BaseScenario"
     time_horizon = "0101-3112"
+    scale_NP_EC_based_on_LV = True # If True scaling parameters are used from LV for NP and EC
 
-    prepare_lstm_data(settlement, experiment, time_horizon)
+    prepare_lstm_data(settlement, experiment, time_horizon, scale_NP_EC_based_on_LV)
