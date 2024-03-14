@@ -5,8 +5,8 @@ import pandas as pd
 import torch 
 from torch.utils.data import DataLoader
 from time import time as get_time
-from tools.utils import train_one_epoch, evaluate, generate_sequences
-from tools.utils import SequenceDataset, QuantileLossMulti, search_csv_files
+from tools.utils import train_one_epoch_multioutput, evaluate_multioutput, generate_sequences
+from tools.utils import SequenceDataset_Multiple, QuantileLossMulti, search_csv_files
 
 from tools.models import simpleLSTM_quantiles
 
@@ -21,18 +21,22 @@ def train_lstm_quantile():
     lookback            = args.lookback    #Timestamps tp lookback for prediction
     experiment_path     = args.experiment_path
     positional_encoding = args.positional_encoding 
-    target              = args.target
-    n_outputs           = args.n_outputs
-    experiment = '_smoothed_forecasts'
-
+    #target              = args.target
+    n_outputs           = 3 #NP, EC, LV
+    use_irradiance_real = True # False -> forecasted irradiance, True -> real irradiance
+    exp_name = 'EC_NP_LV_first_real_irradiance'
+    n_hidden = 50
     start_time = get_time()
 
     # set up paths
     data_path           = os.path.join(experiment_path, 'analysis', 'lstm', "data")
     model_save_path     = os.path.join(experiment_path,'analysis', 'lstm', "model")
     os.makedirs(model_save_path, exist_ok=True)
-    scaling_factors_file = os.path.join(data_path, f'{target}_scalings.json')
-    
+    #scaling_factors_file = os.path.join(data_path, f'{target}_scalings.json')
+    #scaling_data_path = os.path.join(data_path,f'LV_scalings.json')
+    #with open(scaling_data_path, 'r') as file:
+    #    scaling_dict = json.load(file)    
+    #scalings_max_min = (scaling_dict['LV']['max'], scaling_dict['LV']['min'])
     # define quantiles
     quantiles = [0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.98]
     quantile_weights=[1 for i in range(len(quantiles))]
@@ -51,49 +55,62 @@ def train_lstm_quantile():
     elif positional_encoding == 'none':
         n_input = 1
         
-    model = simpleLSTM_quantiles(n_input_features = n_input, n_hidden = 50, num_layers = 4, n_outputs = n_outputs)
-    #model = simpleCfC(n_input_features = n_input, n_hidden = 50, num_layers = 1, n_outputs = 1)
+    model = simpleLSTM_quantiles(n_input_features = n_input, n_hidden = n_hidden, num_layers = 4, n_outputs = n_outputs)
     model.to(device)
 
     # Define Optimizer and Hyperaparameter/LR scheduler
     lr_tmp = LR # variable for logging lr
-    criterion =  QuantileLossMulti(quantiles , quantile_weights)
+    criterion =  QuantileLossMulti(quantiles, quantile_weights)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=0)
 
+    # Load dataset for NP, EC and create dataloaders
     # Start dataset loading
-    df_train_scaled = pd.read_csv(os.path.join(data_path, f'{target}_scaled_train.csv'), index_col=0)
-    df_test_scaled_list = []
-    df_valid_scaled_list = []
 
-    valid_csv_files = search_csv_files(data_path, f'{target}_scaled_val')
-    test_csv_files = search_csv_files(data_path, f'{target}_scaled_test')
+    all_sequences_train = []
+    all_sequences_valid = []
 
-    for valid_csv_path in valid_csv_files:
-        df_val_scaled = pd.read_csv(valid_csv_path, index_col=0)
-        df_valid_scaled_list.append(df_val_scaled)
-    
-    for test_csv_path in test_csv_files:
-        df_test_scale = pd.read_csv(test_csv_path, index_col=0)
-        df_test_scaled_list.append(df_test_scale)
+    for target in ['NP', 'EC', 'LV']:
+        df_train_scaled = pd.read_csv(os.path.join(data_path, f'{target}_scaled_by_LV_train.csv'), index_col=0)
+        df_test_scaled_list = []
+        df_valid_scaled_list = []
 
+        valid_csv_files = search_csv_files(data_path, f'{target}_scaled_by_LV_val')
+        test_csv_files = search_csv_files(data_path, f'{target}_scaled_by_LV_test')
 
-    sequences_train = generate_sequences(df_train_scaled, lookback, 1)
-    print(len(sequences_train))
-    sequences_valid_list = []
-    for i, df_valid_scaled in enumerate(df_valid_scaled_list):
-            sequences_valid = generate_sequences(df_valid_scaled, lookback, 1)
-            sequences_valid_list.append(sequences_valid)
+        for valid_csv_path in valid_csv_files:
+            df_val_scaled = pd.read_csv(valid_csv_path, index_col=0)
+            df_valid_scaled_list.append(df_val_scaled)
 
-    sequences_valid_all = {}
-    k = 0
-    for data in sequences_valid_list:
-        for j in range(len(data)):
-            sequences_valid_all[k] = data[j]
-            k += 1
+        for test_csv_path in test_csv_files:
+            df_test_scale = pd.read_csv(test_csv_path, index_col=0)
+            df_test_scaled_list.append(df_test_scale)
 
-    train_ds = SequenceDataset(sequences_train, positional_encoding = positional_encoding)
-    valid_ds = SequenceDataset(sequences_valid_all, positional_encoding = positional_encoding)
+        sequences_train = generate_sequences(df_train_scaled, lookback, 1, use_irradiance_real = use_irradiance_real)
+        print(len(sequences_train))
+        sequences_valid_list = []
+        for i, df_valid_scaled in enumerate(df_valid_scaled_list):
+                sequences_valid = generate_sequences(df_valid_scaled, lookback, 1,  use_irradiance_real = use_irradiance_real)
+                sequences_valid_list.append(sequences_valid)
+
+        sequences_valid_all = {}
+        k = 0
+        for data in sequences_valid_list:
+            for j in range(len(data)):
+                sequences_valid_all[k] = data[j]
+                k += 1
+
+        all_sequences_train.append(sequences_train)
+        all_sequences_valid.append(sequences_valid_all)
+
+    #print(len(all_sequences_train))
+    #print(len(all_sequences_valid))
+
+    train_ds = SequenceDataset_Multiple(all_sequences_train, positional_encoding = positional_encoding)
+    valid_ds = SequenceDataset_Multiple(all_sequences_valid, positional_encoding = positional_encoding)
+
+    #print(len(train_ds))
+    #print(len(valid_ds))
 
     trainloader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
     validloader = DataLoader(valid_ds, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
@@ -101,15 +118,15 @@ def train_lstm_quantile():
     print("Start training")
     for epoch in range(EPOCH):  
         model.train()
-        train_loss = train_one_epoch(model, criterion, optimizer, trainloader)
+        train_loss = train_one_epoch_multioutput(model, criterion, optimizer, trainloader)
         model.eval()
-        valid_loss = evaluate(model, criterion, validloader)
+        valid_loss = evaluate_multioutput(model, criterion, validloader)
         scheduler.step()
     
         if valid_loss < best_val_loss:
             best_val_loss = valid_loss
             best_train_loss = train_loss
-            torch.save(model.state_dict(), os.path.join(model_save_path,f'{target+experiment}_best_valid_model.pt'))
+            torch.save(model.state_dict(), os.path.join(model_save_path,f'{exp_name}_best_valid_model.pt'))
     
         df_new_row = { 
                         'train_loss' : train_loss,
@@ -121,7 +138,7 @@ def train_lstm_quantile():
             }
         lr_tmp = optimizer.param_groups[0]['lr']
         df_metric.loc[epoch] = df_new_row
-        df_metric.to_csv(os.path.join(model_save_path,f'{target+experiment}_train_history.csv'))
+        df_metric.to_csv(os.path.join(model_save_path,f'{exp_name}_train_history.csv'))
 
         print(f"Epoch {epoch+1}, train_loss={train_loss:0.4g}, val_loss={valid_loss:0.4g}")
     
@@ -140,8 +157,6 @@ if __name__ == '__main__':
     parser.add_argument('--lookback', type=int, default=100, help='look back of network')
     parser.add_argument('--positional_encoding', type = str, default='all', choices=['none', 'sun', 'all'], help='defines which data to use for forecasting')
     parser.add_argument('--experiment_path', type=str, default='./experiments/Rural-LV1-101-2034/BaseScenario/0101-3112', help='path to experiment')
-    parser.add_argument('--target', type=str, default='LV', help='target for training (LV, EC, NP)')
-    parser.add_argument('--n_outputs', type=int, default=1, help='number of outputs for the network')
     
     args = parser.parse_args()
 
