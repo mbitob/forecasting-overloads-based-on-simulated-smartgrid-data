@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 
 
 # Function that creates sequences and targets 
-def generate_sequences(df: pd.Series, tw: int, pw: int):
+def generate_sequences(df: pd.Series, tw: int, pw: int, use_irradiance_real = False):
   '''
   df: Pandas DataFrame of the univariate time-series
   tw: Training Window - Integer defining how many steps to look back
@@ -16,14 +16,18 @@ def generate_sequences(df: pd.Series, tw: int, pw: int):
   returns: dictionary of sequences and targets for all sequences
   '''
   data = dict() # Store results into a dictionary
+
   L = len(df)
   for i in range(L-tw-1):
-
     # Get current sequence  
     #sequence = df[i:i+tw].values[:,0:-1]  # [power, altitude, azimuth, irradiance]
     power_not_shifted = df[i:i+tw].values[:,0:1]
     #print(power_not_shifted.shape)
-    sequence_shift = df[i+1:i+tw+1].values[:,1:-1]
+    if use_irradiance_real:
+      sequence_shift = df[i+1:i+tw+1].values[:,1:-1] # [altitude, azimuth, irradiance]
+    else:
+      sequence_shift = df[i+1:i+tw+1].values[:,[1,2,4]] # [altitude, azimuth, irradiance_fc]
+    
     #print(sequence_shift.shape)
     sequence = np.concatenate((power_not_shifted, sequence_shift), axis = 1)
     #print(sequence.shape)
@@ -32,6 +36,7 @@ def generate_sequences(df: pd.Series, tw: int, pw: int):
     
     data[i] = {'sequence': sequence, 'target': target}
   return data
+
 
 
 class SequenceDataset(Dataset):
@@ -57,6 +62,34 @@ class SequenceDataset(Dataset):
   
   def __len__(self):
     return len(self.data)
+  
+
+class SequenceDataset_Multiple(Dataset):
+
+  def __init__(self, df, positional_encoding = True):
+    self.data = df
+    self.positional_encoding = positional_encoding
+    #self.scalings_max_min = scalings_max_min
+
+  def __getitem__(self, idx):
+    sample_NP = self.data[0][idx]
+    sample_EC = self.data[1][idx]
+    sample_LV = self.data[2][idx]
+
+    if self.positional_encoding == 'all':
+       sample_sequence_LV = sample_LV['sequence']
+    elif self.positional_encoding == 'sun':
+       sample_sequence_LV = sample_sequence_LV['sequence'][:, 0:3] # With sun positional encoding and active power
+    else:
+       sample_sequence_LV = sample_LV['sequence'][:, 0:1] # Without positional encoding only active power
+    
+    target = np.concatenate((sample_NP['target'], sample_EC['target'], sample_LV['target']), axis = 0) 
+    #print(sample_sequence.shape)
+    #print(target.shape)
+    return torch.Tensor(sample_sequence_LV), torch.Tensor(target)#.squeeze()
+  
+  def __len__(self):
+    return len(self.data[0])
   
 
 def train_one_epoch(model, criterion, optimizer, trainloader):
@@ -87,7 +120,6 @@ def train_one_epoch(model, criterion, optimizer, trainloader):
 
     train_loss = running_loss / (i + 1)
 
-    
     return train_loss
     
 
@@ -107,7 +139,58 @@ def evaluate(model, criterion, valloader):
     return np.mean(losses)
 
 
-def run_closed_loop(model, whole_sequence, lookback = 100, future_prediction=4, use_positional_encoding = 'all'):
+
+def train_one_epoch_multioutput(model, criterion, optimizer, trainloader):
+    running_loss = 0.0
+    pbar = tqdm(total=len(trainloader))
+    model.train()
+    device = next(model.parameters()).device  # get device the model is located on
+    for i, (inputs, labels) in enumerate(trainloader):
+        inputs = inputs.to(device)  # move data to same device as the model
+        labels = labels.to(device)
+        inputs = torch.swapaxes(inputs, 0, 1)
+        #print('inputs', inputs.shape)
+        #print('labels', labels.shape)
+        # zero the parameter gradients
+        optimizer.zero_grad()
+        # forward + backward + optimize
+        outputs, _ = model(inputs)
+        
+        #print(outputs.shape)
+
+        #print('outputs', outputs.shape)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        # print statistics
+        running_loss += loss.item()
+        pbar.set_description(f"loss={running_loss / (i + 1):0.4g}")
+        pbar.update(1)
+    pbar.close()
+
+    train_loss = running_loss / (i + 1)
+
+    return train_loss
+    
+
+
+def evaluate_multioutput(model, criterion, valloader):
+    losses = []
+    
+    device = next(model.parameters()).device  # get device the model is located on
+    with torch.no_grad():
+        for inputs, labels in valloader:
+            inputs = inputs.to(device)  # move data to same device as the model
+            labels = labels.to(device)
+            inputs = torch.swapaxes(inputs, 0, 1)
+            outputs, _ = model(inputs)
+            loss = criterion(outputs, labels)
+            losses.append(loss.item())
+    return np.mean(losses)
+
+
+def run_closed_loop(model, whole_sequence, lookback = 100, future_prediction=4, use_positional_encoding = 'all', multi_output = False):
     device = torch.device("cpu")
     #device = next(model.parameters()).device
     model.to(device)
@@ -133,7 +216,8 @@ def run_closed_loop(model, whole_sequence, lookback = 100, future_prediction=4, 
       input = torch.Tensor(input_numpy.T)
       input = input.view(-1,1,1)
     input.to(device)
-    predictions = []
+    predictions_LV = []
+    predictions_all = []
     with torch.no_grad():
         
         for i in range(input.shape[0]):
@@ -144,7 +228,12 @@ def run_closed_loop(model, whole_sequence, lookback = 100, future_prediction=4, 
             else:
               input_tmp = input[i,:,:].view(-1,1,1)
 
-            pred, hx = model(input_tmp, hx)
+            pred_all, hx = model(input_tmp, hx)
+
+            if multi_output:
+              pred = pred_all[0:1, -1::]  # Choose LV as output
+            else:
+              pred = pred_all[0:1, 0:1]
 
         for i in range(future_prediction-1):
             if use_positional_encoding == 'all':
@@ -155,12 +244,23 @@ def run_closed_loop(model, whole_sequence, lookback = 100, future_prediction=4, 
               input = torch.Tensor([pred[0,0], whole_sequence[lookback + i+1, 1], whole_sequence[lookback + i+1, 2]]).view(1,1,3) 
             else:
               input = torch.Tensor([pred[0,0]]).view(1,1,1) 
-            pred, hx = model(input, hx)
-            predictions.append(pred.detach().numpy()[0,0])
-    return np.array(predictions)
+            pred_all, hx = model(input, hx)
+            
+            if multi_output:
+              pred = pred_all[0:1, -1::]  # Choose LV as output
+            else:
+              pred = pred_all[0:1, 0:1]
+
+            predictions_LV.append(pred.detach().numpy()[0,0])
+            if multi_output:
+              predictions_all.append(pred_all.detach().numpy()[0,:])
+            else:
+              predictions_all.append(pred_all.detach().numpy()[0,0])
+
+    return np.array(predictions_LV), np.array(predictions_all)
 
 
-def run_closed_loop_quantile(model, whole_sequence, lookback = 100, future_prediction=4, use_positional_encoding = 'all'):
+def run_closed_loop_quantile(model, whole_sequence, lookback = 100, future_prediction=4, use_positional_encoding = 'all', multi_output = False):
     device = torch.device("cpu")
     #device = next(model.parameters()).device
     model.to(device)
@@ -186,10 +286,11 @@ def run_closed_loop_quantile(model, whole_sequence, lookback = 100, future_predi
       input = torch.Tensor(input_numpy.T)
       input = input.view(-1,1,1)
     input.to(device)
+    #predictions_init = []
+    #predictions_quantiles_int = []
     predictions = []
     predictions_quantiles = []
     with torch.no_grad():
-        
         for i in range(input.shape[0]):
             if use_positional_encoding == 'all' or use_positional_encoding == 'all_original':
               input_tmp = input[i,:,:].view(-1,1,4)
@@ -199,10 +300,27 @@ def run_closed_loop_quantile(model, whole_sequence, lookback = 100, future_predi
               input_tmp = input[i,:,:].view(-1,1,1)
 
             pred_quantiles, hx = model(input_tmp, hx)
-            #print(pred_quantiles.shape)
-            pred, _ = torch.median(pred_quantiles, dim=-1)
+            #print('qunatiles shape', pred_quantiles.shape)
+
+            if multi_output:
+              pred = pred_quantiles[0:1, -1::, 5]  # Choose LV as output
+              #pred = pred_quantiles[0:1, :, 5]
+              #pred, _ = torch.median(pred_quantiles, dim=-1)
+              #print('pred without sc.', pred)
+              #pred = torch.sum(pred, dim = 1).unsqueeze(1) + (scalings_max_min[1]/(scalings_max_min[0]-scalings_max_min[1])) # correct offset due to scaling
+              #print('pred with sc.', pred)
+              #if i == 1:
+                #print('median pred', pred)
+                #print('input_tmp', input_tmp)
+
+            else:
+              #pred, _ = torch.median(pred_quantiles, dim=-1)
+              pred = pred_quantiles[0:1, 0:1, 5]
+            #predictions_init.append(pred.detach().numpy()[0,0])
+            #predictions_quantiles_int.append(pred_quantiles.detach().numpy()[0,0,:])
+              
             #pred = pred_quantiles[0:1, 0:1, 5]
-            #print(pred)
+            #print('pred_shape', pred.shape)
 
         for i in range(future_prediction-1):
             if use_positional_encoding == 'all':
@@ -213,11 +331,30 @@ def run_closed_loop_quantile(model, whole_sequence, lookback = 100, future_predi
               input = torch.Tensor([pred[0,0], whole_sequence[lookback + i+1, 1], whole_sequence[lookback + i+1, 2]]).view(1,1,3) 
             else:
               input = torch.Tensor([pred[0,0]]).view(1,1,1) 
-            pred_qunatiles, hx = model(input, hx)
-            pred, _ = torch.median(pred_qunatiles, dim=-1)
-            #pred = pred_quantiles[0:1, 0:1, 5]
+            pred_quantiles, hx = model(input, hx)
+            if multi_output:
+              # if more outputs (NP, EC) are used, the sum of the two outputs is fed back to network
+              #pred, _ = torch.median(pred_quantiles, dim=-1)
+              #pred = pred_quantiles[0:1, :, 5] 
+              pred = pred_quantiles[0:1, -1::, 5] 
+              #print('pred without sc.', pred)
+              #pred = torch.sum(pred, dim = 1).unsqueeze(1) + (scalings_max_min[1]/(scalings_max_min[0]-scalings_max_min[1]))# correct offset due to scaling
+              #print('pred with sc.', pred)
+            else:
+              pred = pred_quantiles[0:1, 0:1, 5]
+              #pred, _ = torch.median(pred_qunatiles, dim=-1)
+
+            #print(pred.shape)
+            #pred_2 = pred_quantiles[0:1, 0:1, 5]
+            #if i == 1:
+            #  print(pred.shape)
+              #print('median', pred_2)
+              #print('median_index', pred)
             predictions.append(pred.detach().numpy()[0,0])
-            predictions_quantiles.append(pred_qunatiles.detach().numpy()[0,0,:])
+            if multi_output:
+              predictions_quantiles.append(pred_quantiles.detach().numpy()[0,:,:])
+            else:
+              predictions_quantiles.append(pred_quantiles.detach().numpy()[0,0,:])
     return np.array(predictions), np.array(predictions_quantiles)
 
 

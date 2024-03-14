@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import numpy as np
-#from ncps.torch import CfC
 
 
 class simpleLSTM(nn.Module):
@@ -41,6 +40,7 @@ class simpleLSTM(nn.Module):
 class simpleLSTM_quantiles(nn.Module):
     def __init__(self, n_input_features = 4, n_hidden = 50, num_layers = 4, n_outputs = 1, batch_first = False, quantiles = [0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.98]):
         super().__init__()
+        self.n_outputs = n_outputs
         self.batch_first = batch_first
         self.rnn = nn.LSTM( n_input_features,
                             n_hidden,
@@ -48,7 +48,8 @@ class simpleLSTM_quantiles(nn.Module):
                             batch_first=False, 
                             )
         self.quantiles = quantiles
-        self.quantile_heads = nn.ModuleList([nn.Linear(n_hidden, n_outputs) for i in range(len(quantiles))])
+        #self.quantile_heads = nn.ModuleList([nn.Linear(n_hidden, n_outputs) for i in range(len(quantiles))])
+        self.quantile_heads = nn.ModuleList([nn.Sequential(nn.Linear(n_hidden, 20), nn.ReLU(), nn.Linear(20, n_outputs)) for i in range(len(quantiles))])
         
     def forward(self, x, hx=None, cx=None):
         # input x should be the median in the autoregressive fashion
@@ -57,7 +58,8 @@ class simpleLSTM_quantiles(nn.Module):
         #print('LSTM_out', x.shape)
         quantiles_out = []
         for i, quantile_head in enumerate(self.quantile_heads):
-            quantile_pred = quantile_head(x).view(-1,1,1) #(B,1,1)
+            #print('quantile_head', quantile_head(x).shape)
+            quantile_pred = quantile_head(x).view(-1,self.n_outputs,1) #(B,1,1)
             if i == 0:
                 quantiles_out = quantile_pred
             else:
