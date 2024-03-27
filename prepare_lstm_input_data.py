@@ -163,7 +163,7 @@ if __name__ == '__main__':
     #os.chdir(os.path.dirname(__file__))
 
     settlement = "Rural-LV1-101-2034"
-    experiment = "BaseScenario"
+    experiment = "BaseScenario_FCInterpolLin"
     time_horizon = "0101-3112"
     scale_NP_EC_based_on_LV = True # If True scaling parameters are used from LV for NP and EC
 

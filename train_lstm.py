@@ -11,7 +11,7 @@ from tools.utils import train_one_epoch_multioutput, evaluate_multioutput, gener
 from tools.utils import SequenceDataset_Multiple, search_csv_files
 from tools.models import simpleLSTM
 
-torch.manual_seed(1)
+torch.manual_seed(1234)
 
 def main():
     device              = args.device 
@@ -22,8 +22,8 @@ def main():
     experiment_path     = args.experiment_path
     positional_encoding = args.positional_encoding 
     n_outputs           = 3 #NP, EC, LV
-    use_irradiance_real = True # False -> forecasted irradiance, True -> real irradiance
-    exp_name = 'EC_NP_LV_first_real_irradiance_MSE'
+    use_irradiance_real = False # False -> forecasted irradiance, True -> real irradiance
+    exp_name = 'EC_NP_LV_forecasted_irradiance_MSE_second_run_different_seed'
     n_hidden = 50
     start_time = get_time()
 
