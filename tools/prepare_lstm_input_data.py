@@ -17,10 +17,10 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
     experiment_main_path = os.path.join('./experiments/',settlement,experiment,time_horizon)
 
     experiment_data_path = os.path.join(experiment_main_path,"data")
-    lstm_path = os.path.join(experiment_main_path,"analysis","lstm","data")
+    lstm_data_path = os.path.join(experiment_main_path,"analysis","lstm","train_test_data")
 
-    if os.path.exists(lstm_path)==False:
-        os.makedirs(lstm_path) 
+    if os.path.exists(lstm_data_path)==False:
+        os.makedirs(lstm_data_path) 
 
     measurement_data_path = f'{experiment_data_path}/grid_measurements.csv'
     weather_data_path     = f'{experiment_data_path}/weather_data.csv'
@@ -47,7 +47,7 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
 
     # save data for each target key
     for key in keys.keys():
-        print(key)
+        #print(key)
         
         # prepare pd df for each target
         year_df = pd.DataFrame(columns=[key, 'sun_altitude', 'sun_azimuth', 'irradiance_real', 'irradiance_fc'])
@@ -64,7 +64,7 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
         # Save first 6 months as training data
 
         train_df =  year_df['2021-01-01':'2021-07-01']
-        train_df.to_csv(os.path.join(lstm_path,'{}_train.csv'.format(key)))
+        train_df.to_csv(os.path.join(lstm_data_path,'{}_train.csv'.format(key)))
         
         target_columns = list(train_df.columns)
         df_train_scaled = pd.DataFrame(columns = target_columns)
@@ -96,10 +96,10 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
         df_train_scaled.index = train_df.index
 
         # save scaled training data
-        df_train_scaled.to_csv(os.path.join(lstm_path,f'{key}_scaled{additional_info}_train.csv'))
+        df_train_scaled.to_csv(os.path.join(lstm_data_path,f'{key}_scaled{additional_info}_train.csv'))
 
         # Write Scaling factors:
-        scaling_factors_path = os.path.join(lstm_path, f'{key}_scalings{additional_info}.json')
+        scaling_factors_path = os.path.join(lstm_data_path, f'{key}_scalings{additional_info}.json')
         with open(scaling_factors_path, 'w') as file:
             json.dump(scaling_dictionary, file)
 
@@ -124,8 +124,8 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
             test_df = testvalid_df[start_date:end_date]  
             
 
-            val_df.to_csv(os.path.join(lstm_path,f'{key}_val{index}.csv'))  
-            test_df.to_csv(os.path.join(lstm_path,f'{key}_test{index}.csv'))  
+            val_df.to_csv(os.path.join(lstm_data_path,f'{key}_val{index}.csv'))  
+            test_df.to_csv(os.path.join(lstm_data_path,f'{key}_test{index}.csv'))  
         
             # scale val and test values using the scaling factors from the training data
             df_test_scaled = pd.DataFrame(columns = target_columns)
@@ -152,8 +152,8 @@ def prepare_lstm_data(settlement = "Rural-LV1-101-2034", experiment = "BaseScena
             df_test_scaled.index = test_df.index
             
             # save scaled validation and test data
-            df_valid_scaled.to_csv(os.path.join(lstm_path, f'{key}_scaled{additional_info}_val{index}.csv'))
-            df_test_scaled.to_csv(os.path.join(lstm_path, f'{key}_scaled{additional_info}_test{index}.csv'))
+            df_valid_scaled.to_csv(os.path.join(lstm_data_path, f'{key}_scaled{additional_info}_val{index}.csv'))
+            df_test_scaled.to_csv(os.path.join(lstm_data_path, f'{key}_scaled{additional_info}_test{index}.csv'))
                 
             index += 1
     

@@ -66,15 +66,21 @@ class SequenceDataset(Dataset):
 
 class SequenceDataset_Multiple(Dataset):
 
-  def __init__(self, df, positional_encoding = True):
+  def __init__(self, df, positional_encoding = "all", n_outputs = 3):
     self.data = df
+    # TODO remove encoding?
     self.positional_encoding = positional_encoding
+    self.n_outputs = n_outputs
     #self.scalings_max_min = scalings_max_min
 
   def __getitem__(self, idx):
-    sample_NP = self.data[0][idx]
-    sample_EC = self.data[1][idx]
-    sample_LV = self.data[2][idx]
+
+    if self.n_outputs == 3:  
+      sample_NP = self.data[0][idx]
+      sample_EC = self.data[1][idx]
+      sample_LV = self.data[2][idx]
+    else:
+       sample_LV = self.data[0][idx]
 
     if self.positional_encoding == 'all':
        sample_sequence_LV = sample_LV['sequence']
@@ -83,7 +89,11 @@ class SequenceDataset_Multiple(Dataset):
     else:
        sample_sequence_LV = sample_LV['sequence'][:, 0:1] # Without positional encoding only active power
     
-    target = np.concatenate((sample_NP['target'], sample_EC['target'], sample_LV['target']), axis = 0) 
+    if self.n_outputs == 3:
+      target = np.concatenate((sample_NP['target'], sample_EC['target'], sample_LV['target']), axis = 0) 
+    else:
+      target = sample_LV['target']
+
     #print(sample_sequence.shape)
     #print(target.shape)
     return torch.Tensor(sample_sequence_LV), torch.Tensor(target)#.squeeze()
@@ -234,6 +244,7 @@ def run_closed_loop(model, whole_sequence, lookback = 100, future_prediction=4, 
               pred = pred_all[0:1, -1::]  # Choose LV as output
             else:
               pred = pred_all[0:1, 0:1]
+          
 
         for i in range(future_prediction-1):
             if use_positional_encoding == 'all':
@@ -247,15 +258,13 @@ def run_closed_loop(model, whole_sequence, lookback = 100, future_prediction=4, 
             pred_all, hx = model(input, hx)
             
             if multi_output:
-              pred = pred_all[0:1, -1::]  # Choose LV as output
+              pred = pred_all[0:1, -1::] # Choose LV as output
             else:
               pred = pred_all[0:1, 0:1]
 
             predictions_LV.append(pred.detach().numpy()[0,0])
-            if multi_output:
-              predictions_all.append(pred_all.detach().numpy()[0,:])
-            else:
-              predictions_all.append(pred_all.detach().numpy()[0,0])
+
+            predictions_all.append(pred_all.detach().numpy()[0,:])
 
     return np.array(predictions_LV), np.array(predictions_all)
 

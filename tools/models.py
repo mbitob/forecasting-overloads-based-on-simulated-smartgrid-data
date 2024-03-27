@@ -21,7 +21,7 @@ class simpleLSTM(nn.Module):
         if self.bidirectional:
             self.linear = nn.Linear(n_hidden*2, n_outputs)
         else:
-            self.linear = nn.Linear(n_hidden, n_outputs)
+            self.linear = nn.Sequential(nn.Linear(n_hidden, 20), nn.ReLU(), nn.Linear(20, n_outputs)) # TODO: Should be same as simpleLSTM_quantiles
 
 
     def forward(self, x, hx=None, cx=None):
@@ -49,7 +49,7 @@ class simpleLSTM_quantiles(nn.Module):
                             )
         self.quantiles = quantiles
         #self.quantile_heads = nn.ModuleList([nn.Linear(n_hidden, n_outputs) for i in range(len(quantiles))])
-        self.quantile_heads = nn.ModuleList([nn.Sequential(nn.Linear(n_hidden, 20), nn.ReLU(), nn.Linear(20, n_outputs)) for i in range(len(quantiles))])
+        self.quantile_heads = nn.ModuleList([nn.Sequential(nn.Linear(n_hidden, 20), nn.ReLU(), nn.Linear(20, n_outputs)) for i in range(len(quantiles))]) # TODO: Should be same as simpleLSTM
         
     def forward(self, x, hx=None, cx=None):
         # input x should be the median in the autoregressive fashion
